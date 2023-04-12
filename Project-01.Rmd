@@ -1,0 +1,235 @@
+---
+title: "Analysis of Canadian Population"
+author: "By Raman Dhanda"
+#date: "2023-04-02"
+output: 
+  html_document: 
+    toc: yes
+    theme: readable
+    fig_width: 10
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE)
+```
+
+```{css, echo=FALSE}
+
+body {
+/*
+rgb(204,193,168)
+rgb(247,243,239)
+background-color: rgba(246,247,247,0.3);
+}
+h1{
+text-align: center;
+}
+
+
+```
+
+## Preparing Data
+
+### Load Librairies
+```{r}
+library(tidyverse)      # All important libraries
+library(knitr)          # For printing tables
+library(stringr)        # Dealing with strings
+library(skimr)          # Data summary
+library(mice)           # Dealing with missing data
+library(scales)         # to for as non scientific notation
+# will be making use of IMPUTATION to deal with missing data.
+```
+
+
+### Load Data, Change Data Types, and Rename the Columns
+```{r}
+can_pop_raw <- read_csv("Data/Population-estimates-quarterly-CA-PT-Q1-1951_Q1-2023.csv", skip=8)
+can_pop <- read_csv("Data/Population-estimates-quarterly-CA-PT-Q1-1951_Q1-2023.csv", skip=8,
+                    col_types = list('Canada' = col_number(),
+                                     'Newfoundland and Labrador' = col_number(),
+                                     'Prince Edward Island' = col_number(),
+                                     'Nova Scotia' = col_number(),
+                                     'New Brunswick' = col_number(),
+                                     'Quebec' = col_number(),
+                                     'Ontario' = col_number(),
+                                     'Manitoba' = col_number(),
+                                     'Saskatchewan' = col_number(),
+                                     'Alberta' = col_number(),
+                                     'British Columbia' = col_number(),
+                                     'Yukon' = col_number(),
+                                     'Northwest Territories including Nunavut (Terminated) 5' = col_number(),
+                                     'Northwest Territories 6' = col_number(),
+                                     'Nunavut 6' = col_number()
+                    ))
+# Rename all Columns
+can_pop <- can_pop %>% 
+              rename("QY"="Geography",
+              "NL"="Newfoundland and Labrador",
+              "PE"="Prince Edward Island",
+              "NS"="Nova Scotia",
+              "NB"="New Brunswick",
+              "QC"="Quebec",
+              "ON"="Ontario",
+              "MB"="Manitoba",
+              "SK"="Saskatchewan",
+              "AB"="Alberta",
+              "BC"="British Columbia",
+              "YT"="Yukon",
+              "NT-NU"="Northwest Territories including Nunavut (Terminated) 5",
+              "NT"="Northwest Territories 6",
+              "NU"="Nunavut 6")
+#glimpse(can_pop_raw)
+#head(can_pop)
+#head(can_pop_raw)
+glimpse(can_pop)
+```
+
+
+### Create Year and Quarter Columns
+```{r}
+can_pop <- transform(can_pop, Year = str_sub(QY,-4,-1))
+can_pop <- transform(can_pop, Quarter = str_sub(QY,2,2))
+can_pop <- transform(can_pop, QTR = str_sub(QY,1,2))
+can_pop %>% 
+  select(QY, Year, Quarter, QTR) %>% 
+  glimpse()
+```
+
+
+### Convert the Data Types of all numeric Columns to integers
+```{r}
+can_pop <- transform(can_pop, 
+                     Canada = as.integer(Canada),
+                     NL = as.integer(NL),
+                     PE = as.integer(PE),
+                     NS = as.integer(NS),
+                     NB = as.integer(NB),
+                     QC = as.integer(QC),
+                     ON = as.integer(ON),
+                     MB = as.integer(MB),
+                     SK = as.integer(SK),
+                     AB = as.integer(AB),
+                     BC = as.integer(BC),
+                     YT = as.integer(YT),
+                     NT.NU = as.integer(NT.NU),
+                     NT = as.integer(NT),
+                     NU = as.integer(NU),
+                     Year = as.integer(Year),
+                     Quarter = as.integer(Quarter)
+                         )
+glimpse(can_pop)
+```
+
+
+
+### Dealing with missing Data
+#### Visual representation of missing data
+```{r}
+#skim(can_pop)
+md.pattern(can_pop)
+```
+
+All columns have 2 missing data points expect 3 territories: NT-NU, NT and NU. Let's plot these 3 columns along with YT to see what is happening.
+
+
+#### Plot Columns with missing data
+```{r}
+ggplot()+
+  geom_line(data=can_pop, mapping=aes(Year, YT), colour="red")+
+  geom_line(data=can_pop, mapping=aes(Year, NT.NU), colour="blue")+  #using NT-NU does not work
+  geom_line(data=can_pop, mapping=aes(Year, NT), colour="black")+
+  geom_line(data=can_pop, mapping=aes(Year, NU), colour="green")+
+  geom_smooth()
+  
+```
+
+#### Identify where the split accurs.
+```{r}
+can_pop %>% 
+  select(Year, QTR, Quarter, YT, NT.NU, NT, NU) %>% 
+  drop_na(NT,NU) %>% 
+  head()
+```
+
+This shows that in 1991 Q4, NT-NU was split into NT and NU.
+
+Before deciding what could be done with this, lets compare the population of these 4 territories.
+
+Lets combine the 3 Territories into one group of Territories
+```{r}
+can_pop_group <- can_pop %>% 
+                  select(everything()) %>% 
+                  mutate(TR_GR = if_else((Year>1991) | 
+                                          ((Year==1991) & (Quarter==4)),
+                                            (YT + NT + NU),
+                                            (YT + NT.NU)))
+can_pop_group %>% 
+  select(QY,Year, Quarter, QTR, TR_GR) %>% 
+  head()
+```
+
+### Reorder the columns
+```{r}
+can_pop_group <- can_pop_group %>% 
+  select(QY, Year, Quarter, QTR, Canada, NL, PE, NS, NB, QC, ON, MB, SK, AB, BC, TR_GR)
+head(can_pop_group)
+
+```
+
+Pivot the Table to long form. This will make it easy to work with.
+```{r}
+can_pop_group %>% 
+  pivot_longer(cols = 5:16,
+               names_to = "PT",
+               values_to = "Pop") %>%
+  filter((Year==1955 | Year == 1990 | Year == 2023) & Quarter==1) %>% 
+  select(Year, PT, Pop) %>%
+  filter(PT!='Canada') %>% 
+        ggplot(aes(x=reorder(PT,-Pop), y=Pop, fill=factor(Year)))+ # reorder PT per Population values and use factor(Year) to have side by side PT values for different years
+        geom_bar(stat="identity",position=position_dodge())+    # to not plot the count but the `value
+        scale_fill_brewer(palette="Paired")+
+        scale_y_continuous(labels = comma)+      # to show values as ##,###,###
+        geom_text(aes(label=Pop), angle=0, position=position_dodge(0.7), vjust="right", hjust="center", size=2)
+```
+
+
+
+
+
+
+
+```{r, echo=FALSE, include=FALSE}
+glimpse(can_pop)
+```
+
+
+### Nice Table
+```{r, echo=FALSE, include=FALSE}
+can_pop %>% 
+  select(Year, Canada, ON, BC) %>% 
+  head() %>% 
+  kable()
+```
+
+
+####
+```{r, include=FALSE}
+ggplot(data = can_pop,
+       aes(x=Year,
+           y=Canada))+
+  geom_point(size=2)+
+  geom_line(colour="red", size=1)
+  geom_line()
+#head(can_pop,10)
+#glimpse(can_pop)
+#skim(can_pop)
+#skim(can_pop)
+```
+
+
+
+
